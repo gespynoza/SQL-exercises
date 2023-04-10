@@ -1,0 +1,149 @@
+USE ECOMERCE_DB
+GO
+*/1. Cantidad de usuarios donde su apellido comience con la letra ‘M’.
+SELECT COUNT(*) AS 'Cantidad de usuarios con apellido que comienza con M'
+FROM CUSTOMER
+WHERE APELLIDO LIKE 'M%';
+
+
+2.Listado de los usuarios que cumplan años en el día de la fecha (hoy)./
+
+SELECT NOMBRE, APELLIDO, FNACIMIENTO
+FROM CUSTOMER
+WHERE MONTH(FNACIMIENTO) = MONTH(GETDATE()) AND DAY(FNACIMIENTO) = DAY(GETDATE());
+
+/*
+
+3. Por día se necesita, cantidad de ventas realizadas, cantidad de productos vendidos
+y monto total transaccionado para el mes de Enero del 2020.
+
+*/	
+
+SELECT DAY(FVENTA) AS 'Dia',
+       COUNT(DISTINCT ID_ORDEN) AS 'Ventas realizadas',
+       SUM(ID_ITEM) AS 'Productos vendidos',
+       SUM(PRECIO) AS 'Total transaccionado'
+FROM ORDEN
+WHERE MONTH(FVENTA) = 1 AND YEAR(FVENTA) = 2020
+GROUP BY DAY(FVENTA)
+ORDER BY DAY(FVENTA);
+
+
+
+/*
+
+4. Por cada mes del 2019, se solicita el top 5 de usuarios que más vendieron ($) en la
+categoría Celulares. Se requiere el mes y año de análisis, nombre y apellido del
+vendedor, la cantidad vendida y el monto total transaccionado.
+
+*/	
+	SELECT
+    YEAR(ORDEN.FVENTA) AS Anio,
+    MONTH(ORDEN.FVENTA) AS Mes,
+    CUSTOMER.NOMBRE AS Nombre,
+    CUSTOMER.APELLIDO AS Apellido,
+    COUNT(*) AS Cantidad_vendida,
+    SUM(ORDEN.PRECIO) AS Monto_total_transaccionado
+FROM
+    ORDEN
+    INNER JOIN CUSTOMER ON ORDEN.ID_CUSTOMER = CUSTOMER.ID_CUSTOMER
+    INNER JOIN ITEM ON ORDEN.ID_ITEM = ITEM.ID_ITEM
+    INNER JOIN CATEGORY ON ITEM.ID_CATEGORIA = CATEGORY.ID_CATEGORIA
+WHERE
+    CATEGORY.NOMBRE = 'Celulares'
+    AND YEAR(ORDEN.FVENTA) = 2019
+GROUP BY
+    YEAR(ORDEN.FVENTA),
+    MONTH(ORDEN.FVENTA),
+    CUSTOMER.ID_CUSTOMER,
+    CUSTOMER.NOMBRE,
+    CUSTOMER.APELLIDO
+ORDER BY
+    YEAR(ORDEN.FVENTA),
+    MONTH(ORDEN.FVENTA),
+    SUM(ORDEN.PRECIO) DESC
+
+
+/*
+5.Se solicita poblar una nueva tabla con el precio y estado de los Ítems a fin del día.
+Tener en cuenta que debe ser reprocesable. Vale resaltar que en la tabla Item,
+vamos a tener únicamente el último estado informado por la PK definida. (Se puede
+resolver a través de StoredProcedure)
+
+a. Vale resaltar que en la tabla Item, vamos a tener únicamente el último estado
+informado por la PK definida.
+*/
+CREATE PROCEDURE PopulateItemStatusTable
+AS
+BEGIN
+  -- Create a temporary table to store the latest state of each item based on the primary key
+  CREATE TABLE #LatestItemStatus
+  (
+    ID_ITEM INT PRIMARY KEY,
+    PRODUCTO VARCHAR(100),
+    PRECIO INT,
+    ESTADO VARCHAR(100)
+  )
+
+  -- Populate the temporary table with the latest state of each item based on the primary key
+  INSERT INTO #LatestItemStatus
+  SELECT ID_ITEM, PRODUCTO, PRECIO, ESTADO
+  FROM ESTADO_ITEM ei
+  WHERE ei.ID_ESTADO = (
+    SELECT MAX(ID_ESTADO)
+    FROM ESTADO_ITEM ei2
+    WHERE ei2.ID_ITEM = ei.ID_ITEM
+  )
+
+  -- Insert the data from the temporary table into the new table
+  INSERT INTO ITEM_STATUS (ID_ITEM, PRODUCTO, PRECIO, ESTADO, DATE_CREATED)
+  SELECT ID_ITEM, PRODUCTO, PRECIO, ESTADO, GETDATE()
+  FROM #LatestItemStatus
+
+  -- Clean up the temporary table
+  DROP TABLE #LatestItemStatus
+END
+
+5. Se solicita poblar una tabla con el precio y estado de los Items a fin del día (se
+puede resolver a través de StoredProcedure).
+
+CREATE PROCEDURE PopulatePriceAndStateTable
+AS
+BEGIN
+	-- Create a temporary table to hold the latest state of each item
+	CREATE TABLE #LatestState
+	(
+		ID_ITEM INT,
+		ESTADO VARCHAR(100),
+		FECHA_CAMBIO DATETIME
+	)
+	
+	-- Populate the temporary table with the latest state of each item
+	INSERT INTO #LatestState (ID_ITEM, ESTADO, FECHA_CAMBIO)
+	SELECT ID_ITEM, ESTADO, FECHA_CAMBIO
+	FROM ESTADO_ITEM EI
+	WHERE FECHA_CAMBIO = (
+		SELECT MAX(FECHA_CAMBIO)
+		FROM ESTADO_ITEM
+		WHERE ID_ITEM = EI.ID_ITEM
+	)
+	
+	-- Create the final table that will hold the price and state of each item at the end of the day
+	CREATE TABLE PriceAndStateTable
+	(
+		ID_ITEM INT,
+		PRODUCTO VARCHAR(100),
+		PRECIO INT,
+		ESTADO VARCHAR(100)
+	)
+	
+	-- Populate the final table with the price and state of each item at the end of the day
+	INSERT INTO PriceAndStateTable (ID_ITEM, PRODUCTO, PRECIO, ESTADO)
+	SELECT I.ID_ITEM, I.PRODUCTO, EI.PRECIO, LS.ESTADO
+	FROM ITEM I
+	JOIN #LatestState LS ON I.ID_ITEM = LS.ID_ITEM
+	JOIN ESTADO_ITEM EI ON LS.ID_ITEM = EI.ID_ITEM AND LS.FECHA_CAMBIO = EI.FECHA_CAMBIO
+	
+	-- Drop the temporary table
+	DROP TABLE #LatestState
+END
